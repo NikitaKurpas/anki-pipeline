@@ -4,20 +4,45 @@ from dto import Word, Words
 
 async def extract_words(client: AsyncOpenAI, text: str) -> list[Word]:
     instructions = """
-Extract all standalone Japanese vocabulary items, set phrases, phrase patterns, etc. from the given text.
-- For words that typically form compounds with numbers, substitute the number with "〜" (e.g., "〜年前" instead of "年前").
-- For each word, output its **dictionary** form, reading, and 1-3 most common English translations.
-- Output kanji for words commonly written in kanji, even if the input is hiragana.
+You are a sophisticated Japanese language processing system tasked with extracting and analyzing vocabulary items from a given text. Your goal is to provide a comprehensive list of standalone Japanese vocabulary items, set phrases, and phrase patterns, along with their readings and translations.
 
-Each line should be formatted as `<word>:<reading>:<translation>`.
-"""
+Please follow these steps to analyze the text and provide the required information:
+
+1. Read through the entire text carefully.
+2. Identify all standalone Japanese vocabulary items, set phrases, and phrase patterns.
+3. For each identified item, perform the following analysis:
+   a. Determine the dictionary form of the item.
+   b. If the item typically forms compounds with numbers, replace the number with "〜" (e.g., "〜年前" instead of "年前").
+   c. Provide the reading of the item in hiragana.
+   d. Identify 1-3 of the most useful or common English translations for the item.
+   e. Prefer simpler English translations.
+   f. If the item is commonly written in kanji, use the kanji form even if the input is in hiragana.
+
+Output your analysis in the following format:
+
+[Item in Japanese (kanji if commonly used)]:[Reading in hiragana]:[1-3 common english translations]
+
+Example output:
+
+食べる:たべる:to eat
+お願いします:おねがいします:please
+〜年前:〜ねんまえ:~ years ago
+""".strip()
     response = await client.chat.completions.create(
         model='gpt-4o',
         max_tokens=2048,
         temperature=0.0,
         messages=[
             {'role': 'system', 'content': instructions},
-            {'role': 'user', 'content': text},
+            {'role': 'user', 'content': f"""
+Here is the Japanese input you need to process:
+
+<japanese_input>
+{text}
+</japanese_input>
+
+Begin processing the Japanese input now.
+""".strip()},
         ],
     )
 
