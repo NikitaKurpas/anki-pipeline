@@ -14,15 +14,10 @@ from typing import Sequence
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from ai import (
-    extract_words,
-    generate_example_sentences,
-    generate_ruby,
-    generate_sentence_ruby,
-    generate_word_info,
-)
+from japanese_processor import JapaneseProcessor
+from english_processor import EnglishProcessor
+from processors import BaseWordData, LanguageProcessor
 from anki import NoteInput, add_note, get_decks, get_version
-from dto import Word, Words
 
 
 async def main():
@@ -36,37 +31,41 @@ async def main():
     ]
 
     if len(lines) == 0:
-        print('Error: provided input text is empty, nothing to process')
-        return
+        raise Exception('No input text provided')
 
     text = '\n'.join(lines)
 
     if not text:
-        print('Error: provided input text is empty, nothing to process')
-        return
+        raise Exception('No input text provided')
 
     if args.dry_run is None:
         if get_version()['result'] is None:
-            print(
-                'Error: Anki is not running or AnkiConnect server is not accessible. Please start AnkiConnect and try again.'
+            raise Exception(
+                'Anki is not running or AnkiConnect server is not accessible'
             )
-            return
 
         if args.deck not in get_decks()['result']:
-            print(f'Error: deck "{args.deck}" does not exist')
-            return
+            raise Exception(f'Deck "{args.deck}" does not exist')
 
     openai_client = AsyncOpenAI()
 
-    words: Words
+    words: dict[str, BaseWordData]
+
+    # Select processor based on language
+    processor: LanguageProcessor
+    if args.language == 'jp':
+        processor = JapaneseProcessor()
+    elif args.language == 'en':
+        processor = EnglishProcessor()
+    else:
+        raise ValueError(f'Unsupported language: {args.language}')
 
     # Extract words from text
     print('Extracting words...')
-    extracted_words = await extract_words(openai_client, text)
+    extracted_words = await processor.extract_words(openai_client, text)
 
     if len(extracted_words) == 0:
-        print("Error: couldn't extract any words from the provided text")
-        return
+        raise Exception("Couldn't extract any words from the provided text")
 
     print(f'Extracted {len(extracted_words)} words')
 
@@ -86,49 +85,21 @@ async def main():
 
     words = {word.word: word for word in extracted_words if word.word in words_to_add}
 
-    # Generate ruby for each word
-    print('Generating furigana...')
-    await generate_ruby(openai_client, words)
-
-    # Generate additional info for each word
-    print('Generating word info...')
-    await generate_word_info(openai_client, words)
-
-    # Generate example sentences for each word
-    print('Generating example sentences...')
-    await generate_example_sentences(openai_client, words)
+    # Enrich words with additional data
+    print('Enriching words with additional data...')
+    await processor.enrich_words(openai_client, words)
 
     if args.dry_run == 'sentences':
-        print('Dry run: example sentences')
-        print(
-            '\n'.join(
-                [
-                    f'{word.word} ({word.meaning})\n  {word.sentence} ({word.sentence_meaning})'
-                    for word in words.values()
-                ]
-            )
-        )
+        print('Dry run: enriched words')
+        for word in words.values():
+            print(word.to_str())
         return
-
-    # Generate sentence ruby for each word
-    print('Generating example sentence furigana...')
-    await generate_sentence_ruby(openai_client, words)
 
     note_candidates = [
         NoteInput(
             deck=args.deck,
-            model='Kaishi Alt Vocab',
-            fields={
-                'Word': word.word,
-                'Word Meaning': word.meaning or '',
-                'Word Reading': word.reading or '',
-                'Word Furigana': word.ruby or '',
-                'Sentence': word.sentence or '',
-                'Sentence Meaning': word.sentence_meaning or '',
-                'Sentence Furigana': word.sentence_ruby or '',
-                'Notes': word.notes or '',
-                'Kanji Meaning': word.kanji_meaning or '',
-            },
+            model=processor.get_note_model(),
+            fields=processor.get_note_fields(word),
             tags=[],
         )
         for word in words.values()
@@ -136,14 +107,8 @@ async def main():
 
     if args.dry_run == 'all':
         print('Dry run: adding notes')
-        print(
-            '\n'.join(
-                [
-                    f'{note["fields"]["Word"]}（{note["fields"]["Word Reading"]}）「{note["fields"]["Word Furigana"]}」 ({note["fields"]["Word Meaning"]})\n  {note["fields"]["Notes"]}\n  {note["fields"]["Sentence"]} 「{note["fields"]["Sentence Furigana"]}」 ({note["fields"]["Sentence Meaning"]})'
-                    for note in note_candidates
-                ]
-            )
-        )
+
+        print('\n'.join([f'{note["fields"]}' for note in note_candidates]))
         return
     else:
         print(f'Adding {len(note_candidates)} notes to Anki...')
@@ -189,11 +154,12 @@ def parse_args():
         default=None,
     )
     parser.add_argument('--deck', type=str, required=True)
+    parser.add_argument('--language', type=str, choices=['jp', 'en'], required=True)
     # parser.add_argument('--update-existing', action='store_true')
     return parser.parse_args()
 
 
-def prompt_user_to_edit(words: Sequence[Word]) -> list[str]:
+def prompt_user_to_edit(words: Sequence[BaseWordData]) -> list[str]:
     with tempfile.NamedTemporaryFile(delete=False, mode='w+') as temp_file:
         temp_filename = temp_file.name
         # Write the words to the file, prefixing each with a comment

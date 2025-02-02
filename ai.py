@@ -31,7 +31,9 @@ Example output:
         temperature=0.0,
         messages=[
             {'role': 'system', 'content': instructions},
-            {'role': 'user', 'content': f"""
+            {
+                'role': 'user',
+                'content': f"""
 Here is the Japanese input you need to process:
 
 <japanese_input>
@@ -39,7 +41,8 @@ Here is the Japanese input you need to process:
 </japanese_input>
 
 Begin processing the Japanese input now.
-""".strip()},
+""".strip(),
+            },
         ],
     )
 
